@@ -17,6 +17,8 @@ def 总览() -> dict:
             "旁置数": 数("SELECT COUNT(*) FROM 旁置簿"),
             "抽取批次数": 数("SELECT COUNT(*) FROM 抽取批次"),
             "回放批次数": 数("SELECT COUNT(*) FROM 回放批次"),
+            "封印数": 数("SELECT COUNT(*) FROM 封印 WHERE 状态='在封'"),
+            "影子数": 数("SELECT COUNT(*) FROM 影子快照 WHERE 状态='在影'"),
         }
     finally:
         conn.close()

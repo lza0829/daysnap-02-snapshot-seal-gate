@@ -4,6 +4,7 @@ from typing import Any
 
 from app.db import 连接
 from app.services.时间 import 此刻, 标准化营业日
+from app.services import 封印
 
 
 def _台参(conn) -> dict[str, str]:
@@ -18,14 +19,21 @@ def _前日(营业日: str) -> str:
 
 
 def 日终抽取(营业日: str, 批次编号: str = "") -> dict[str, Any]:
-    """按营业日为全部正常账户写周期快照。余额=前日快照(或开户零)+当日流水净额。"""
+    """按营业日为全部正常账户写周期快照。余额=前日快照(或开户零)+当日流水净额。
+
+    封印写闸：营业日一旦在封，正式有效镜一律不写；只落影子快照（非有效）。
+    """
     日 = 标准化营业日(营业日)
     批 = 批次编号.strip() or f"抽取-{日}-{uuid.uuid4().hex[:8]}"
     conn = 连接()
     try:
+        # 先取写锁，令「查封印→写快照」在同一临界区内完成，
+        # 避免封印与抽取并发时出现「封印已成、正式镜仍被盖写」。
+        conn.execute("BEGIN IMMEDIATE")
         参 = _台参(conn)
         重复 = 参.get("重复抽取", "盖写同日快照")
         缺前日 = 参.get("缺前日策略", "以零为开端")
+        封 = 封印.在封(conn, 日)
         账户们 = [
             dict(r)
             for r in conn.execute("SELECT * FROM 账户 WHERE 状态='正常' ORDER BY 账户键")
@@ -34,6 +42,9 @@ def 日终抽取(营业日: str, 批次编号: str = "") -> dict[str, Any]:
         盖写 = 0
         旁置 = 0
         断档数 = 0
+        影子写入 = 0
+        影子覆盖 = 0
+        封印拒改 = 0
         for 户 in 账户们:
             账户键 = 户["账户键"]
             开户日 = 户["开户营业日"]
@@ -47,12 +58,15 @@ def 日终抽取(营业日: str, 批次编号: str = "") -> dict[str, Any]:
             if 前日快照 is None:
                 if 日 == 开户日 or 缺前日 == "以零为开端":
                     开端 = 0
-                else:
+                elif 封 is None:
                     conn.execute(
                         "INSERT INTO 断档记录(账户键, 缺营业日, 检出批次编号, 处置, 时刻) VALUES (?,?,?,?,?)",
                         (账户键, 前, 批, "记断档并继续", 此刻()),
                     )
                     断档数 += 1
+                    开端 = 0
+                else:
+                    # 封印日的再抽是影子演练，不写正式诊断表，免污染断档台账。
                     开端 = 0
             else:
                 开端 = int(前日快照["余额"])
@@ -65,9 +79,33 @@ def 日终抽取(营业日: str, 批次编号: str = "") -> dict[str, Any]:
             余额 = 开端 + 净额
             快照键 = f"{账户键}|{日}"
             旧 = conn.execute(
-                "SELECT 快照键 FROM 周期快照 WHERE 账户键=? AND 营业日=?",
+                "SELECT 快照键, 余额 FROM 周期快照 WHERE 账户键=? AND 营业日=?",
                 (账户键, 日),
             ).fetchone()
+            if 封 is not None:
+                # 封印已成：正式镜绝不动。已有正式行则落影子对照；无正式行则拒绝新增正式行。
+                if 旧 is None:
+                    # 「无新正式行」：封印日不得凭空新增正式镜。
+                    封印拒改 += 1
+                    conn.execute(
+                        "INSERT INTO 旁置簿(原因, 账户键, 营业日, 载荷, 时刻) VALUES (?,?,?,?,?)",
+                        (
+                            "封印日无正式行，拒绝新增",
+                            账户键,
+                            日,
+                            json.dumps({"余额": 余额, "批次": 批}, ensure_ascii=False),
+                            此刻(),
+                        ),
+                    )
+                    旁置 += 1
+                    continue
+                果 = 封印.写影子(conn, 账户键, 日, 余额, 批, 旧["余额"])
+                if 果 == "覆盖":
+                    影子覆盖 += 1
+                else:
+                    影子写入 += 1
+                封印拒改 += 1
+                continue
             if 旧:
                 if 重复 != "盖写同日快照":
                     conn.execute(
@@ -102,6 +140,10 @@ def 日终抽取(营业日: str, 批次编号: str = "") -> dict[str, Any]:
             "旁置": 旁置,
             "断档": 断档数,
             "账户扫描": len(账户们),
+            "封印": 封 is not None,
+            "封印拒改": 封印拒改,
+            "影子写入": 影子写入,
+            "影子覆盖": 影子覆盖,
         }
         conn.execute(
             "INSERT INTO 抽取批次(编号, 营业日, 时刻, 报告) VALUES (?,?,?,?)",
@@ -109,5 +151,8 @@ def 日终抽取(营业日: str, 批次编号: str = "") -> dict[str, Any]:
         )
         conn.commit()
         return {"批次编号": 批, **报告}
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()

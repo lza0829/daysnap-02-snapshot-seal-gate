@@ -4,6 +4,7 @@ from typing import Any
 
 from app.db import 连接
 from app.services.时间 import 此刻, 标准化营业日
+from app.services import 封印
 
 
 def _前日(营业日: str) -> str:
@@ -19,6 +20,13 @@ def 回放核对(营业日: str, 批次编号: str = "") -> dict[str, Any]:
     批 = 批次编号.strip() or f"回放-{日}-{uuid.uuid4().hex[:8]}"
     conn = 连接()
     try:
+        封 = 封印.在封(conn, 日)
+        影子 = {
+            r["账户键"]: int(r["余额"])
+            for r in conn.execute(
+                "SELECT 账户键, 余额 FROM 影子快照 WHERE 营业日=? AND 状态='在影'", (日,)
+            )
+        }
         参 = {r["键"]: r["值"] for r in conn.execute("SELECT 键, 值 FROM 台参")}
         try:
             阈值 = int(参.get("跳变阈值分", "0") or "0")
@@ -65,10 +73,26 @@ def 回放核对(营业日: str, 批次编号: str = "") -> dict[str, Any]:
             if 差额 == 0:
                 相符 += 1
             else:
+                原因 = "快照与回放不一致"
+                if 封 is not None:
+                    原因 = "封印后偏离（正式镜不动，见影子）"
+                    conn.execute(
+                        "INSERT INTO 旁置簿(原因, 账户键, 营业日, 载荷, 时刻) VALUES (?,?,?,?,?)",
+                        (
+                            "封印后回放偏离",
+                            账户键,
+                            日,
+                            json.dumps(
+                                {"快照余额": 快照余额, "回放余额": 回放余额, "影子余额": 影子.get(账户键)},
+                                ensure_ascii=False,
+                            ),
+                            此刻(),
+                        ),
+                    )
                 conn.execute(
                     "INSERT INTO 差额行(回放批次编号, 账户键, 营业日, 快照余额, 回放余额, 差额, 原因, 时刻) "
                     "VALUES (?,?,?,?,?,?,?,?)",
-                    (批, 账户键, 日, 快照余额, 回放余额, 差额, "快照与回放不一致", 此刻()),
+                    (批, 账户键, 日, 快照余额, 回放余额, 差额, 原因, 此刻()),
                 )
                 差额数 += 1
             偏离 = abs(快照余额 - (开端 + 净额))
@@ -80,6 +104,7 @@ def 回放核对(营业日: str, 批次编号: str = "") -> dict[str, Any]:
                 )
                 跳变数 += 1
         通过 = 差额数 == 0 and 无快照 == 0
+        核 = 封印.核证述(conn, 日)
         报告 = {
             "营业日": 日,
             "相符": 相符,
@@ -87,6 +112,10 @@ def 回放核对(营业日: str, 批次编号: str = "") -> dict[str, Any]:
             "跳变": 跳变数,
             "无快照": 无快照,
             "通过": 通过,
+            "已封印": 封 is not None,
+            "正式指纹": 核["正式指纹"],
+            "指纹有效": 核["valid"],
+            "影子行数": len(影子),
         }
         conn.execute(
             "INSERT INTO 回放批次(编号, 营业日, 时刻, 报告) VALUES (?,?,?,?)",

@@ -10,7 +10,7 @@ export default function 差额清单() {
   return (
     <div>
       <h1 className="题">差额清单</h1>
-      <p className="述">快照余额与回放余额不一致时落在这里；冒烟通过时应为空或仅历史批。</p>
+      <p className="述">快照余额与回放余额不一致时落在这里；封印后的偏离会标注「正式镜不动，见影子」。</p>
       <div className="行">
         <button className="次" onClick={() => api.差额().then(set行).catch((e) => set讯(String(e.message || e)))}>
           刷新

@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db import 夹具目录, 连接
-from app.services import 回放, 抽取, 目录, 装载
+from app.services import 回放, 抽取, 封印, 目录, 装载
 
 路由 = APIRouter(prefix="/api")
 
@@ -16,6 +16,24 @@ class 装载请求(BaseModel):
 class 营业日请求(BaseModel):
     营业日: str
     批次编号: str = ""
+
+
+class 封印请求(BaseModel):
+    营业日: str
+    原因: str = ""
+    操作人: str = ""
+
+
+class 解封请求(BaseModel):
+    营业日: str
+    原因: str
+    操作人: str = ""
+
+
+class 迟到补抽请求(BaseModel):
+    营业日: str
+    批次编号: str = ""
+    流水: list = Field(default_factory=list)
 
 
 @路由.get("/健康")
@@ -214,6 +232,56 @@ def 执行回放(体: 营业日请求):
         raise HTTPException(400, str(e)) from e
 
 
+@路由.post("/封印")
+def 执行封印(体: 封印请求):
+    try:
+        return 封印.封印当日(体.营业日, 体.原因, 体.操作人)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@路由.post("/解封")
+def 执行解封(体: 解封请求):
+    try:
+        return 封印.解封当日(体.营业日, 体.原因, 体.操作人)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@路由.get("/封印")
+def 列封印(营业日: str = ""):
+    try:
+        return 封印.列封印(营业日)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@路由.get("/封印核证")
+def 取封印核证(营业日: str):
+    """封印/影子只读核证：营业日、正式指纹、影子有无、valid。"""
+    try:
+        return 封印.核证(营业日)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@路由.get("/影子")
+def 列影子(营业日: str = "", 账户键: str = "", 含作废: bool = False):
+    """影子只读出口；影子永不升正式，对外主读仍是 /快照。"""
+    try:
+        return 封印.列影子(营业日, 账户键, 含作废)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@路由.post("/迟到补抽")
+def 执行迟到补抽(体: 迟到补抽请求):
+    try:
+        return 封印.迟到补抽(体.营业日, 体.流水, 体.批次编号)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 @路由.post("/重置业务库")
 def 重置():
     """开发冒烟用：清业务表并保留账户与台参。"""
@@ -229,6 +297,8 @@ def 重置():
             "跳变记录",
             "旁置簿",
             "装载批次",
+            "封印",
+            "影子快照",
         ):
             conn.execute(f"DELETE FROM {t}")
         conn.commit()

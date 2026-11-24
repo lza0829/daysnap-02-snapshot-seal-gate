@@ -89,6 +89,30 @@ CREATE TABLE IF NOT EXISTS 装载批次 (
   时刻 TEXT NOT NULL,
   报告 TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS 封印 (
+  营业日 TEXT PRIMARY KEY,
+  正式指纹 TEXT NOT NULL,
+  快照行数 INTEGER NOT NULL DEFAULT 0,
+  封印时刻 TEXT NOT NULL,
+  封印原因 TEXT NOT NULL DEFAULT '',
+  操作人 TEXT NOT NULL DEFAULT '',
+  状态 TEXT NOT NULL DEFAULT '在封',
+  解封时刻 TEXT NOT NULL DEFAULT '',
+  解封原因 TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS 影子快照 (
+  快照键 TEXT PRIMARY KEY,
+  账户键 TEXT NOT NULL,
+  营业日 TEXT NOT NULL,
+  余额 INTEGER NOT NULL,
+  抽取批次编号 TEXT NOT NULL,
+  来源 TEXT NOT NULL DEFAULT '封印后再抽',
+  正式余额 INTEGER,
+  差额 INTEGER,
+  生成时刻 TEXT NOT NULL,
+  状态 TEXT NOT NULL DEFAULT '在影',
+  UNIQUE(账户键, 营业日)
+);
 """
 
 空桩模块 = [
@@ -99,7 +123,6 @@ CREATE TABLE IF NOT EXISTS 装载批次 (
     "负余额闸",
     "币种隔离",
     "半截抽取回滚",
-    "快照封印写闸",
     "回放权威择定",
     "断档补齐",
     "断档旁置",
@@ -114,6 +137,10 @@ CREATE TABLE IF NOT EXISTS 装载批次 (
     "三日连环守恒",
     "抽取重试预算",
     "跨日切点策略",
+]
+
+已落地模块 = [
+    "快照封印写闸",
 ]
 
 
@@ -132,6 +159,7 @@ def 初始化库() -> None:
             "断档处置": "记断档并继续",
             "缺前日策略": "以零为开端",
             "重复抽取": "盖写同日快照",
+            "封印写闸": "影子轨：封印日再抽只落影子，正式有效镜不动",
         }.items():
             conn.execute("INSERT INTO 台参(键, 值) VALUES (?, ?)", (k, v))
     if conn.execute("SELECT COUNT(*) AS c FROM 账户").fetchone()["c"] == 0:

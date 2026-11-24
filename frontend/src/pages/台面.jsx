@@ -36,6 +36,31 @@ export default function 台面() {
     }
   };
 
+  const 封印冒烟 = async () => {
+    set忙(true);
+    set讯("");
+    try {
+      await api.重置();
+      await api.装载夹具("三日连环样例.json");
+      await api.抽取("2026-11-20");
+      await api.抽取("2026-11-21");
+      await api.抽取("2026-11-22");
+      const 封 = await api.封印("2026-11-22", "冒烟封印");
+      await api.装载夹具("封印后迟到样例.json");
+      const 再抽 = await api.抽取("2026-11-22");
+      const 核 = await api.封印核证("2026-11-22");
+      刷新();
+      set讯(
+        `封印冒烟：封印指纹未变=${核.正式指纹 === 封.正式指纹} valid=${核.valid}；` +
+          `再抽正式拒改=${再抽.封印拒改} 影子=${再抽.影子写入 + 再抽.影子覆盖} 盖写=${再抽.盖写}`
+      );
+    } catch (e) {
+      set讯(String(e.message || e));
+    } finally {
+      set忙(false);
+    }
+  };
+
   const o = 总览 || {};
   return (
     <div>
@@ -53,6 +78,7 @@ export default function 台面() {
       </div>
       <div className="行">
         <button disabled={忙} onClick={冒烟}>{忙 ? "跑着…" : "一键冒烟"}</button>
+        <button className="水" disabled={忙} onClick={封印冒烟}>封印后再抽冒烟</button>
         <button className="次" onClick={() => 刷新().catch((e) => set讯(String(e.message || e)))}>刷新总览</button>
         <button
           className="次"

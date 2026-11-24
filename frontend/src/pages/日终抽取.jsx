@@ -15,14 +15,21 @@ export default function 日终抽取() {
   return (
     <div>
       <h1 className="题">日终抽取</h1>
-      <p className="述">按营业日写周期快照：前日余额 + 当日流水净额。</p>
+      <p className="述">按营业日写周期快照：前日余额 + 当日流水净额。已封印营业日只落影子，正式镜不动。</p>
       <div className="行">
         <input value={日} onChange={(e) => set日(e.target.value)} placeholder="YYYY-MM-DD" />
         <button
           onClick={() =>
             api
               .抽取(日)
-              .then((r) => set讯(`批次 ${r.批次编号} 写入=${r.写入} 盖写=${r.盖写} 断档=${r.断档}`))
+              .then((r) =>
+                set讯(
+                  `批次 ${r.批次编号} 写入=${r.写入} 盖写=${r.盖写} 断档=${r.断档}` +
+                    (r.封印
+                      ? `｜已封印：正式拒改=${r.封印拒改} 影子=${r.影子写入 + r.影子覆盖}`
+                      : "")
+                )
+              )
               .then(刷新)
               .catch((e) => set讯(String(e.message || e)))
           }
